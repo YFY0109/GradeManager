@@ -163,6 +163,60 @@
           </template>
         </el-table>
       </el-card>
+
+      <el-card v-if="scopeType === 'grade' && classStats" class="block">
+        <template #header>
+          <div class="class-stats-header">
+            <span>班级逐科指标</span>
+            <el-select
+              v-model="classStatsSubject"
+              size="small"
+              style="width: 120px"
+              aria-label="班级逐科指标科目"
+            >
+              <el-option
+                v-for="name in classStatsSubjects"
+                :key="name"
+                :label="name"
+                :value="name"
+              />
+            </el-select>
+          </div>
+        </template>
+        <el-table :data="classStats.classes" border size="small">
+          <el-table-column prop="class" label="班级" width="90" fixed />
+          <el-table-column label="实考" width="80">
+            <template #default="{ row }">
+              {{ classSubjectRate(row, classStatsSubject)?.participants ?? '—' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="平均分" width="90">
+            <template #default="{ row }">
+              {{ fixed(classSubjectAvg(row, classStatsSubject), 2) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="优秀率" width="85">
+            <template #default="{ row }">
+              {{ pct(classSubjectRate(row, classStatsSubject)?.excellent_rate) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="良好率" width="85">
+            <template #default="{ row }">
+              {{ pct(classSubjectRate(row, classStatsSubject)?.good_rate) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="合格率" width="85">
+            <template #default="{ row }">
+              {{ pct(classSubjectRate(row, classStatsSubject)?.pass_rate) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="过差率" width="85">
+            <template #default="{ row }">
+              {{ pct(classSubjectRate(row, classStatsSubject)?.poor_rate) }}
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
     </template>
 
     <el-empty v-else-if="!loading" description="暂无统计数据" />
@@ -180,9 +234,9 @@ import {
   TooltipComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import { overviewApi } from '../../api'
+import { examApi, overviewApi } from '../../api'
 import { useAuthStore } from '../../stores/auth'
-import type { ClassOverview, Overview } from '../../types'
+import type { ClassOverview, ClassStats, Overview, Stats } from '../../types'
 
 echarts.use([
   BarChart,
@@ -203,6 +257,8 @@ const props = defineProps<{
 const auth = useAuthStore()
 
 const data = ref<Overview | null>(null)
+const classStats = ref<Stats | null>(null)
+const classStatsSubject = ref('')
 const loading = ref(false)
 
 const levelRef = ref<HTMLDivElement>()
@@ -245,6 +301,18 @@ const classSortMetrics = computed(() => [
     value: column.average,
   })),
 ])
+
+const classStatsSubjects = computed(() =>
+  Object.keys(classStats.value?.grade.subject_rates ?? {}),
+)
+
+function classSubjectRate(row: ClassStats, subject: string) {
+  return row.subject_rates[subject]
+}
+
+function classSubjectAvg(row: ClassStats, subject: string) {
+  return row.subject_avg[subject]
+}
 
 const sortedClassRows = computed(() => {
   const rows = [...(data.value?.classes ?? [])]
@@ -308,15 +376,26 @@ async function load() {
   if (!props.examPid) return
   if (props.scopeType === 'class' && !props.classPid) {
     data.value = null
+    classStats.value = null
     return
   }
   loading.value = true
   try {
-    const { data: res } = await overviewApi.get(
-      props.examPid,
-      props.scopeType === 'class' ? props.classPid : undefined,
-    )
+    const [{ data: res }, statsResult] = await Promise.all([
+      overviewApi.get(
+        props.examPid,
+        props.scopeType === 'class' ? props.classPid : undefined,
+      ),
+      props.scopeType === 'grade'
+        ? examApi.stats(props.examPid).catch(() => null)
+        : Promise.resolve(null),
+    ])
     data.value = res
+    classStats.value = statsResult?.data ?? null
+    const subjectNames = Object.keys(classStats.value?.grade.subject_rates ?? {})
+    if (classStats.value && !subjectNames.includes(classStatsSubject.value)) {
+      classStatsSubject.value = subjectNames[0] ?? ''
+    }
     await nextTick()
     renderCharts()
   } finally {
@@ -467,6 +546,13 @@ onBeforeUnmount(() => {
 
 .stat-cards :deep(.el-card__body) {
   height: 100%;
+}
+
+.class-stats-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .chart {
