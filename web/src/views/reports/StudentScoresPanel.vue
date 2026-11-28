@@ -119,7 +119,7 @@
         label="筛选排名"
         prop="filtered_rank"
         sortable="custom"
-        width="100"
+        width="120"
       >
         <template #default="{ row }">
           {{ filteredRankMap.get(row.public_id) ?? '—' }}
