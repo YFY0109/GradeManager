@@ -267,11 +267,13 @@
           <el-checkbox v-model="draftFilters.subjectScore.enabled">
             单科成绩区间
           </el-checkbox>
-          <div v-if="draftFilters.subjectScore.enabled" class="filter-config">
+          <div v-if="draftFilters.subjectScore.enabled" class="filter-config subject-range-config">
             <el-select
-              v-model="draftFilters.subjectScore.subjectPid"
-              placeholder="选择科目"
-              style="width: 140px"
+              v-model="subjectScoreSelection"
+              multiple
+              collapse-tags
+              placeholder="选择科目（可多选）"
+              style="width: 100%"
             >
               <el-option
                 v-for="subject in subjects"
@@ -280,23 +282,40 @@
                 :value="subject.public_id"
               />
             </el-select>
-            <el-input-number
-              v-model="draftFilters.subjectScore.min"
-              :min="0"
-              :max="subjectScoreMax"
-              :precision="1"
-              placeholder="最低分"
-              style="width: 140px"
-            />
-            <span class="muted">至</span>
-            <el-input-number
-              v-model="draftFilters.subjectScore.max"
-              :min="0"
-              :max="subjectScoreMax"
-              :precision="1"
-              placeholder="最高分"
-              style="width: 140px"
-            />
+            <div
+              v-for="item in draftFilters.subjectScore.items"
+              :key="item.subjectPid"
+              class="subject-range-row"
+            >
+              <span class="subject-range-name">{{ subjectName(item.subjectPid) }}</span>
+              <el-input-number
+                v-model="item.min"
+                :min="0"
+                :max="subjectFullScore(item.subjectPid)"
+                :precision="1"
+                placeholder="最低分"
+                style="width: 130px"
+              />
+              <span class="muted">至</span>
+              <el-input-number
+                v-model="item.max"
+                :min="0"
+                :max="subjectFullScore(item.subjectPid)"
+                :precision="1"
+                placeholder="最高分"
+                style="width: 130px"
+              />
+              <el-button
+                link
+                type="danger"
+                @click="removeSubjectRange(item.subjectPid)"
+              >
+                移除
+              </el-button>
+            </div>
+            <p v-if="!draftFilters.subjectScore.items.length" class="muted subject-range-tip">
+              选择科目后，可为每科分别设置分数区间。
+            </p>
           </div>
         </div>
       </div>
@@ -326,6 +345,12 @@ interface ScoreRow extends RankedStudent {
   totalText: string
 }
 
+interface SubjectScoreRange {
+  subjectPid: string
+  min?: number
+  max?: number
+}
+
 interface ScoreFilters {
   class: { enabled: boolean; names: string[] }
   total: { enabled: boolean; min?: number; max?: number }
@@ -342,9 +367,7 @@ interface ScoreFilters {
   }
   subjectScore: {
     enabled: boolean
-    subjectPid: string
-    min?: number
-    max?: number
+    items: SubjectScoreRange[]
   }
 }
 
@@ -354,7 +377,7 @@ function makeFilters(): ScoreFilters {
     total: { enabled: false },
     rank: { enabled: false, field: 'grade_rank' },
     absent: { enabled: false, mode: 'none', subjectPid: '' },
-    subjectScore: { enabled: false, subjectPid: '' },
+    subjectScore: { enabled: false, items: [] },
   }
 }
 
@@ -464,11 +487,31 @@ const canFilterClass = computed(
 const totalFullScore = computed(() =>
   examSubjects.value.reduce((sum, subject) => sum + Number(subject.full_score), 0),
 )
-const subjectScoreMax = computed(() => {
-  const subject = subjects.value.find(
-    (item) => item.public_id === draftFilters.value.subjectScore.subjectPid,
-  )
+function subjectFullScore(subjectPid: string) {
+  const subject = subjects.value.find((item) => item.public_id === subjectPid)
   return subject ? Number(subject.full_score) : 150
+}
+
+function subjectName(subjectPid: string) {
+  return subjects.value.find((item) => item.public_id === subjectPid)?.name || '未选择科目'
+}
+
+function removeSubjectRange(subjectPid: string) {
+  draftFilters.value.subjectScore.items = draftFilters.value.subjectScore.items.filter(
+    (item) => item.subjectPid !== subjectPid,
+  )
+}
+
+const subjectScoreSelection = computed<string[]>({
+  get: () => draftFilters.value.subjectScore.items.map((item) => item.subjectPid),
+  set: (pids) => {
+    const current = new Map(
+      draftFilters.value.subjectScore.items.map((item) => [item.subjectPid, item]),
+    )
+    draftFilters.value.subjectScore.items = pids.map(
+      (pid) => current.get(pid) ?? { subjectPid: pid },
+    )
+  },
 })
 const enabledFilterCount = computed(() => countActiveFilters(filters.value))
 const hasActiveFilters = computed(() => enabledFilterCount.value > 0)
@@ -547,8 +590,9 @@ function countActiveFilters(current: ScoreFilters) {
   if (
     subjects.value.length &&
     current.subjectScore.enabled &&
-    current.subjectScore.subjectPid &&
-    hasRange(current.subjectScore)
+    current.subjectScore.items.some(
+      (item) => item.subjectPid && hasRange(item),
+    )
   ) {
     count += 1
   }
@@ -593,17 +637,15 @@ function matchesFilters(row: ScoreRow, current: ScoreFilters) {
     }
   }
 
-  if (
-    current.subjectScore.enabled &&
-    current.subjectScore.subjectPid &&
-    hasRange(current.subjectScore)
-  ) {
-    const subject = subjects.value.find(
-      (item) => item.public_id === current.subjectScore.subjectPid,
-    )
-    if (subject) {
+  if (current.subjectScore.enabled) {
+    for (const item of current.subjectScore.items) {
+      if (!item.subjectPid || !hasRange(item)) continue
+      const subject = subjects.value.find(
+        (entry) => entry.public_id === item.subjectPid,
+      )
+      if (!subject) continue
       const value = row.scores[subject.name]
-      if (value == null || !inRange(Number(value), current.subjectScore)) return false
+      if (value == null || !inRange(Number(value), item)) return false
     }
   }
 
@@ -797,6 +839,27 @@ async function exportExcel(item?: string) {
   align-items: center;
   gap: 10px;
   margin: 10px 0 0 24px;
+}
+
+.subject-range-config {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.subject-range-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.subject-range-name {
+  width: 64px;
+  font-weight: 600;
+}
+
+.subject-range-tip {
+  margin: 0;
 }
 
 @media (max-width: 640px) {
