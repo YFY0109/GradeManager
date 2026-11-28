@@ -679,6 +679,7 @@ onBeforeUnmount(() => {
 
 .stat-cards {
   align-items: stretch;
+  row-gap: 16px;
 }
 
 .stat-cards :deep(.el-col) {

@@ -70,7 +70,7 @@
         </el-table-column>
       </el-table>
       <p class="muted note">
-        分数段按总分满分比例划分；占比以该班齐全人数为分母。
+        分数段按总分满分比例划分；每根柱子的总高度为该班 100%，颜色段表示各分数段人数占比。
       </p>
     </el-card>
 
@@ -454,21 +454,31 @@ function renderSegmentChart() {
   segmentChart.value?.dispose()
   segmentChart.value = echarts.init(segmentRef.value)
   segmentChart.value.setOption({
-    tooltip: { trigger: 'axis' },
+    tooltip: {
+      trigger: 'axis',
+      valueFormatter: (value: number) => `${(Number(value) * 100).toFixed(1)}%`,
+    },
     legend: { type: 'scroll', top: 0 },
-    grid: { left: 48, right: 24, top: 44, bottom: 60 },
+    grid: { left: 52, right: 24, top: 44, bottom: 60 },
     xAxis: {
       type: 'category',
       data: block.classes.map((row) => row.class),
       axisLabel: { rotate: 35, fontSize: 10 },
     },
-    yAxis: { type: 'value', name: '人数' },
+    yAxis: {
+      type: 'value',
+      name: '占比',
+      max: 1,
+      axisLabel: {
+        formatter: (value: number) => `${Math.round(value * 100)}%`,
+      },
+    },
     series: segments.map((segment) => ({
       name: segment.label,
       type: 'bar',
       stack: 'total',
       barMaxWidth: 42,
-      data: block.classes.map((row) => row.counts[segment.label] ?? 0),
+      data: block.classes.map((row) => row.ratios[segment.label] ?? 0),
     })),
   })
 }
