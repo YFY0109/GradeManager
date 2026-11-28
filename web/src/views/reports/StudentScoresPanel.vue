@@ -9,7 +9,7 @@
         style="width: 220px; max-width: 100%"
       />
       <el-select
-        v-if="canViewTotalForExam"
+        v-if="compareExams.length && (canViewTotalForExam || subjects.length)"
         v-model="comparePid"
         placeholder="对比考试（可选）"
         clearable
@@ -22,8 +22,9 @@
           :value="exam.public_id"
         />
       </el-select>
+      <el-button v-if="compareExam" link @click="comparePid = ''">退出对比</el-button>
       <el-select
-        v-if="subjects.length"
+        v-if="subjects.length && !compareExam"
         v-model="visibleSubjects"
         multiple
         collapse-tags
@@ -64,7 +65,23 @@
       </span>
     </div>
 
+    <ScoreComparisonPanel
+      v-if="compareExam"
+      :key="compareExam.public_id"
+      v-model:page-size="pageSize"
+      :current-name="currentExam?.name || '本次考试'"
+      :reference-exam="compareExam"
+      :class-pid="reportClassPid"
+      :current-subjects="examSubjects"
+      :visible-subjects="subjects"
+      :can-view-total="canViewTotalForExam"
+      :rank-fields="rankFields"
+      :rows="matchedRows"
+      :loading-current="loading"
+      :searching="!!searchTerm"
+    />
     <el-table
+      v-else
       :key="`${examPid}:${scopeType}`"
       v-loading="loading"
       :data="pagedRows"
@@ -108,26 +125,10 @@
           </template>
         </el-table-column>
       </template>
-      <template v-if="canViewTotalForExam && comparePid">
-        <el-table-column label="对比总分" width="100">
-          <template #default="{ row }">{{ row.compareTotal ?? '—' }}</template>
-        </el-table-column>
-        <el-table-column label="分差" width="90">
-          <template #default="{ row }">
-            <span
-              :class="{
-                'delta-up': row.delta != null && row.delta > 0,
-                'delta-down': row.delta != null && row.delta < 0,
-              }"
-            >
-              {{ row.delta == null ? '—' : (row.delta > 0 ? '+' : '') + row.delta.toFixed(1) }}
-            </span>
-          </template>
-        </el-table-column>
-      </template>
     </el-table>
 
     <TablePager
+      v-if="!compareExam"
       :page="page"
       :page-size="pageSize"
       :total="matchedRows.length"
@@ -144,16 +145,15 @@ import { downloadBlob, examApi } from '../../api'
 import TablePager from '../../components/TablePager.vue'
 import { useAuthStore } from '../../stores/auth'
 import type { Exam, ExamSubject, Student } from '../../types'
+import ScoreComparisonPanel from './ScoreComparisonPanel.vue'
+import { TOTAL_RANK_ITEM as TOTAL } from './scoreComparison'
+import type { RankedStudent, RankField } from './scoreComparison'
 
-interface ScoreRow extends Student {
+interface ScoreRow extends RankedStudent {
   totalText: string
-  total: number | null
-  ranks: Partial<Record<string, number>>
 }
 
-type RankKey = 'grade_rank' | 'class_rank'
 type SortOrder = 'ascending' | 'descending'
-const TOTAL = 'total'
 const RANK_BATCH_SIZE = 3
 
 const props = defineProps<{
@@ -168,7 +168,6 @@ const rows = shallowRef<ScoreRow[]>([])
 const examSubjects = ref<ExamSubject[]>([])
 const visibleSubjects = ref<string[]>([])
 const comparePid = ref('')
-const compareTotals = shallowRef(new Map<string, number | null>())
 const loading = ref(false)
 const loadError = ref('')
 const reload = ref(0)
@@ -182,7 +181,7 @@ const reportClassPid = computed(() => props.scopeType === 'class' ? props.classP
 const canRankGrade = computed(() => auth.can('can_rank_grade'))
 const canRankClass = computed(() => props.scopeType === 'class' && auth.can('can_rank_class'))
 const rankFields = computed(() => {
-  const fields: { key: RankKey; label: string }[] = []
+  const fields: RankField[] = []
   if (canRankGrade.value) fields.push({ key: 'grade_rank', label: '年排' })
   if (canRankClass.value) fields.push({ key: 'class_rank', label: '班排' })
   return fields
@@ -208,7 +207,9 @@ const canExportRank = computed(() =>
   (props.scopeType === 'class' ? canRankClass.value : canRankGrade.value) &&
   (canViewTotalForExam.value || subjects.value.length > 0),
 )
+const currentExam = computed(() => props.exams.find((exam) => exam.public_id === props.examPid))
 const compareExams = computed(() => props.exams.filter((exam) => exam.public_id !== props.examPid))
+const compareExam = computed(() => compareExams.value.find((exam) => exam.public_id === comparePid.value))
 
 const sortedRows = computed(() => {
   const item = sort.value?.prop.split(':')[0]
@@ -238,14 +239,9 @@ const matchedRows = computed(() => {
 })
 const pagedRows = computed(() => {
   const start = (page.value - 1) * pageSize.value
-  const pageRows = pageSize.value === 0
+  return pageSize.value === 0
     ? matchedRows.value
     : matchedRows.value.slice(start, start + pageSize.value)
-  return pageRows.map((row) => {
-    const compareTotal = compareTotals.value.get(row.public_id) ?? null
-    const delta = row.total == null || compareTotal == null ? null : row.total - compareTotal
-    return { ...row, compareTotal, delta }
-  })
 })
 
 function changeSort({ prop, order }: { prop: string; order: SortOrder | null }) {
@@ -314,6 +310,12 @@ async function loadRanks(
 
 watch([() => props.examPid, () => props.scopeType], () => {
   sort.value = null
+  if (comparePid.value === props.examPid) comparePid.value = ''
+})
+
+watch(comparePid, () => {
+  sort.value = null
+  page.value = 1
 })
 
 watch(
@@ -342,7 +344,6 @@ watch(
         const hasScores = detail.subjects.some((subject) => student.scores[subject.name] != null)
         return {
           ...student,
-          total,
           totalText: total != null ? total.toFixed(1) : hasScores ? '部分缺考' : '缺考',
           ranks: {},
         }
@@ -360,29 +361,6 @@ watch(
   { immediate: true },
 )
 
-watch(
-  [comparePid, () => props.examPid, reportClassPid, canViewTotalForExam],
-  async ([selected, examPid, classPid, canCompare], _, onCleanup) => {
-    compareTotals.value = new Map()
-    if (!canCompare || !selected || selected === examPid) return
-    const controller = new AbortController()
-    const { signal } = controller
-    onCleanup(() => controller.abort())
-    try {
-      const [{ data: detail }, { data: students }] = await Promise.all([
-        examApi.detail(selected, signal),
-        examApi.students(selected, classPid, signal),
-      ])
-      if (signal.aborted || !canViewTotal(detail.subjects)) return
-      compareTotals.value = new Map(
-        students.map((student) => [student.public_id, sumScores(student, detail.subjects)]),
-      )
-    } catch {
-      // 请求错误已由 API 客户端提示；保留当前考试的成绩明细。
-    }
-  },
-)
-
 async function exportExcel(item?: string) {
   const isClass = props.scopeType === 'class'
   const params = item === undefined
@@ -392,7 +370,7 @@ async function exportExcel(item?: string) {
         subject_pid: item === TOTAL ? undefined : item,
         class_pid: isClass ? props.classPid : undefined,
       }
-  const exam = props.exams.find((exam) => exam.public_id === props.examPid)
+  const exam = currentExam.value
   const scopeLabel = isClass ? '班级' : '年级'
   const title = item === undefined ? `${scopeLabel}_完整成绩表` : `${scopeLabel}排名`
   exporting.value = true
@@ -405,15 +383,3 @@ async function exportExcel(item?: string) {
   }
 }
 </script>
-
-<style scoped>
-.delta-up {
-  color: #67c23a;
-  font-weight: 600;
-}
-
-.delta-down {
-  color: #f56c6c;
-  font-weight: 600;
-}
-</style>
