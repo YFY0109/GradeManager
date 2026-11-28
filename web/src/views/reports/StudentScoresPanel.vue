@@ -38,6 +38,9 @@
           :value="subject.public_id"
         />
       </el-select>
+      <el-button v-if="!compareExam" @click="openFilters">
+        筛选{{ enabledFilterCount ? `（${enabledFilterCount}）` : '' }}
+      </el-button>
       <el-button v-if="canExportFull" :loading="exporting" @click="exportExcel()">
         导出成绩表
       </el-button>
@@ -89,7 +92,7 @@
       border
       stripe
       height="calc(100vh - 370px)"
-      :empty-text="searchTerm ? '未找到匹配的学生' : '暂无学生数据'"
+      :empty-text="searchTerm || hasActiveFilters ? '未找到符合条件的学生' : '暂无学生数据'"
       @sort-change="changeSort"
     >
       <el-table-column prop="student_no" label="考号" width="110" fixed />
@@ -152,6 +155,158 @@
       @update:page="page = $event"
       @update:page-size="pageSize = $event"
     />
+
+    <el-dialog
+      v-model="filterDialogVisible"
+      title="成绩筛选"
+      width="min(760px, 94vw)"
+      append-to-body
+    >
+      <div class="filter-list">
+        <div v-if="canFilterClass" class="filter-block">
+          <el-checkbox v-model="draftFilters.class.enabled">班级</el-checkbox>
+          <div v-if="draftFilters.class.enabled" class="filter-config">
+            <el-select
+              v-model="draftFilters.class.names"
+              multiple
+              collapse-tags
+              placeholder="选择班级"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="name in classFilterOptions"
+                :key="name"
+                :label="name"
+                :value="name"
+              />
+            </el-select>
+          </div>
+        </div>
+
+        <div v-if="canViewTotalForExam" class="filter-block">
+          <el-checkbox v-model="draftFilters.total.enabled">总分区间</el-checkbox>
+          <div v-if="draftFilters.total.enabled" class="filter-config">
+            <el-input-number
+              v-model="draftFilters.total.min"
+              :min="0"
+              :max="totalFullScore"
+              :precision="1"
+              placeholder="最低分"
+              style="width: 150px"
+            />
+            <span class="muted">至</span>
+            <el-input-number
+              v-model="draftFilters.total.max"
+              :min="0"
+              :max="totalFullScore"
+              :precision="1"
+              placeholder="最高分"
+              style="width: 150px"
+            />
+          </div>
+        </div>
+
+        <div v-if="rankFields.length" class="filter-block">
+          <el-checkbox v-model="draftFilters.rank.enabled">总分排名区间</el-checkbox>
+          <div v-if="draftFilters.rank.enabled" class="filter-config">
+            <el-select
+              v-if="rankFields.length > 1"
+              v-model="draftFilters.rank.field"
+              style="width: 120px"
+            >
+              <el-option
+                v-for="field in rankFields"
+                :key="field.key"
+                :label="field.label"
+                :value="field.key"
+              />
+            </el-select>
+            <el-input-number
+              v-model="draftFilters.rank.min"
+              :min="1"
+              :max="9999"
+              placeholder="最低名次"
+              style="width: 150px"
+            />
+            <span class="muted">至</span>
+            <el-input-number
+              v-model="draftFilters.rank.max"
+              :min="1"
+              :max="9999"
+              placeholder="最高名次"
+              style="width: 150px"
+            />
+          </div>
+        </div>
+
+        <div v-if="subjects.length" class="filter-block">
+          <el-checkbox v-model="draftFilters.absent.enabled">缺考情况</el-checkbox>
+          <div v-if="draftFilters.absent.enabled" class="filter-config">
+            <el-radio-group v-model="draftFilters.absent.mode">
+              <el-radio value="none">全部齐全</el-radio>
+              <el-radio value="any">有缺考</el-radio>
+              <el-radio value="subject">指定科目缺考</el-radio>
+            </el-radio-group>
+            <el-select
+              v-if="draftFilters.absent.mode === 'subject'"
+              v-model="draftFilters.absent.subjectPid"
+              placeholder="选择科目"
+              style="width: 150px"
+            >
+              <el-option
+                v-for="subject in subjects"
+                :key="subject.public_id"
+                :label="subject.name"
+                :value="subject.public_id"
+              />
+            </el-select>
+          </div>
+        </div>
+
+        <div v-if="subjects.length" class="filter-block">
+          <el-checkbox v-model="draftFilters.subjectScore.enabled">
+            单科成绩区间
+          </el-checkbox>
+          <div v-if="draftFilters.subjectScore.enabled" class="filter-config">
+            <el-select
+              v-model="draftFilters.subjectScore.subjectPid"
+              placeholder="选择科目"
+              style="width: 140px"
+            >
+              <el-option
+                v-for="subject in subjects"
+                :key="subject.public_id"
+                :label="subject.name"
+                :value="subject.public_id"
+              />
+            </el-select>
+            <el-input-number
+              v-model="draftFilters.subjectScore.min"
+              :min="0"
+              :max="subjectScoreMax"
+              :precision="1"
+              placeholder="最低分"
+              style="width: 140px"
+            />
+            <span class="muted">至</span>
+            <el-input-number
+              v-model="draftFilters.subjectScore.max"
+              :min="0"
+              :max="subjectScoreMax"
+              :precision="1"
+              placeholder="最高分"
+              style="width: 140px"
+            />
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="clearDraftFilters">清空筛选</el-button>
+        <el-button @click="filterDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="applyFilters">应用筛选</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -167,7 +322,44 @@ import { TOTAL_RANK_ITEM as TOTAL } from './scoreComparison'
 import type { RankedStudent, RankField } from './scoreComparison'
 
 interface ScoreRow extends RankedStudent {
+  total: number | null
   totalText: string
+}
+
+interface ScoreFilters {
+  class: { enabled: boolean; names: string[] }
+  total: { enabled: boolean; min?: number; max?: number }
+  rank: {
+    enabled: boolean
+    field: 'grade_rank' | 'class_rank'
+    min?: number
+    max?: number
+  }
+  absent: {
+    enabled: boolean
+    mode: 'none' | 'any' | 'subject'
+    subjectPid: string
+  }
+  subjectScore: {
+    enabled: boolean
+    subjectPid: string
+    min?: number
+    max?: number
+  }
+}
+
+function makeFilters(): ScoreFilters {
+  return {
+    class: { enabled: false, names: [] },
+    total: { enabled: false },
+    rank: { enabled: false, field: 'grade_rank' },
+    absent: { enabled: false, mode: 'none', subjectPid: '' },
+    subjectScore: { enabled: false, subjectPid: '' },
+  }
+}
+
+function cloneFilters(filters: ScoreFilters): ScoreFilters {
+  return JSON.parse(JSON.stringify(filters)) as ScoreFilters
 }
 
 type SortOrder = 'ascending' | 'descending'
@@ -194,6 +386,9 @@ const keyword = ref('')
 const page = ref(1)
 const pageSize = ref(50)
 const sort = ref<{ prop: string; order: SortOrder } | null>(null)
+const filters = ref<ScoreFilters>(makeFilters())
+const draftFilters = ref<ScoreFilters>(makeFilters())
+const filterDialogVisible = ref(false)
 
 const reportClassPid = computed(() => props.scopeType === 'class' ? props.classPid : undefined)
 const canRankGrade = computed(() => auth.can('can_rank_grade'))
@@ -258,6 +453,26 @@ const currentExam = computed(() => props.exams.find((exam) => exam.public_id ===
 const compareExams = computed(() => props.exams.filter((exam) => exam.public_id !== props.examPid))
 const compareExam = computed(() => compareExams.value.find((exam) => exam.public_id === comparePid.value))
 
+const classFilterOptions = computed(() =>
+  [...new Set(rows.value.map((row) => row.class))].sort((a, b) =>
+    a.localeCompare(b, 'zh-Hans-CN', { numeric: true }),
+  ),
+)
+const canFilterClass = computed(
+  () => props.scopeType === 'grade' && classFilterOptions.value.length > 1,
+)
+const totalFullScore = computed(() =>
+  examSubjects.value.reduce((sum, subject) => sum + Number(subject.full_score), 0),
+)
+const subjectScoreMax = computed(() => {
+  const subject = subjects.value.find(
+    (item) => item.public_id === draftFilters.value.subjectScore.subjectPid,
+  )
+  return subject ? Number(subject.full_score) : 150
+})
+const enabledFilterCount = computed(() => countActiveFilters(filters.value))
+const hasActiveFilters = computed(() => enabledFilterCount.value > 0)
+
 const sortedRows = computed(() => {
   const item = sort.value?.prop.split(':')[0]
   const hasSortColumn = item === TOTAL
@@ -283,10 +498,13 @@ const sortedRows = computed(() => {
   })
 })
 const searchTerm = computed(() => keyword.value.trim().toLowerCase())
+const filteredRows = computed(() =>
+  sortedRows.value.filter((row) => matchesFilters(row, filters.value)),
+)
 const matchedRows = computed(() => {
   const term = searchTerm.value
-  if (!term) return sortedRows.value
-  return sortedRows.value.filter(
+  if (!term) return filteredRows.value
+  return filteredRows.value.filter(
     (row) => row.name.toLowerCase().includes(term) || row.student_no.toLowerCase().includes(term),
   )
 })
@@ -300,6 +518,118 @@ const pagedRows = computed(() => {
 function changeSort({ prop, order }: { prop: string; order: SortOrder | null }) {
   sort.value = order ? { prop, order } : null
   page.value = 1
+}
+
+function hasRange(range: { min?: number; max?: number }) {
+  return range.min != null || range.max != null
+}
+
+function inRange(value: number, range: { min?: number; max?: number }) {
+  if (range.min != null && value < range.min) return false
+  if (range.max != null && value > range.max) return false
+  return true
+}
+
+function countActiveFilters(current: ScoreFilters) {
+  let count = 0
+  if (canFilterClass.value && current.class.enabled && current.class.names.length) {
+    count += 1
+  }
+  if (canViewTotalForExam.value && current.total.enabled && hasRange(current.total)) {
+    count += 1
+  }
+  if (rankFields.value.length && current.rank.enabled && hasRange(current.rank)) {
+    count += 1
+  }
+  if (subjects.value.length && current.absent.enabled) {
+    count += 1
+  }
+  if (
+    subjects.value.length &&
+    current.subjectScore.enabled &&
+    current.subjectScore.subjectPid &&
+    hasRange(current.subjectScore)
+  ) {
+    count += 1
+  }
+  return count
+}
+
+function matchesFilters(row: ScoreRow, current: ScoreFilters) {
+  if (
+    canFilterClass.value &&
+    current.class.enabled &&
+    current.class.names.length &&
+    !current.class.names.includes(row.class)
+  ) {
+    return false
+  }
+
+  if (
+    canViewTotalForExam.value &&
+    current.total.enabled &&
+    hasRange(current.total)
+  ) {
+    if (row.total == null || !inRange(row.total, current.total)) return false
+  }
+
+  if (rankFields.value.length && current.rank.enabled && hasRange(current.rank)) {
+    if (rankFields.value.some((field) => field.key === current.rank.field)) {
+      const rank = row.ranks[`${TOTAL}:${current.rank.field}`]
+      if (rank == null || !inRange(rank, current.rank)) return false
+    }
+  }
+
+  if (subjects.value.length && current.absent.enabled) {
+    const names = subjects.value.map((subject) => subject.name)
+    const missing = names.filter((name) => row.scores[name] == null)
+    if (current.absent.mode === 'none' && missing.length) return false
+    if (current.absent.mode === 'any' && !missing.length) return false
+    if (current.absent.mode === 'subject' && current.absent.subjectPid) {
+      const subject = subjects.value.find(
+        (item) => item.public_id === current.absent.subjectPid,
+      )
+      if (subject && row.scores[subject.name] != null) return false
+    }
+  }
+
+  if (
+    current.subjectScore.enabled &&
+    current.subjectScore.subjectPid &&
+    hasRange(current.subjectScore)
+  ) {
+    const subject = subjects.value.find(
+      (item) => item.public_id === current.subjectScore.subjectPid,
+    )
+    if (subject) {
+      const value = row.scores[subject.name]
+      if (value == null || !inRange(Number(value), current.subjectScore)) return false
+    }
+  }
+
+  return true
+}
+
+function openFilters() {
+  draftFilters.value = cloneFilters(filters.value)
+  const availableRanks = rankFields.value
+  if (
+    availableRanks.length &&
+    !availableRanks.some((field) => field.key === draftFilters.value.rank.field)
+  ) {
+    draftFilters.value.rank.field = availableRanks[0].key
+  }
+  filterDialogVisible.value = true
+}
+
+function applyFilters() {
+  filters.value = cloneFilters(draftFilters.value)
+  page.value = 1
+  filterDialogVisible.value = false
+}
+
+function clearDraftFilters() {
+  draftFilters.value = makeFilters()
 }
 
 watch(searchTerm, () => {
@@ -363,6 +693,9 @@ async function loadRanks(
 
 watch([() => props.examPid, () => props.scopeType], () => {
   sort.value = null
+  filters.value = makeFilters()
+  draftFilters.value = makeFilters()
+  filterDialogVisible.value = false
   if (comparePid.value === props.examPid) comparePid.value = ''
 })
 
@@ -397,6 +730,7 @@ watch(
         const hasScores = detail.subjects.some((subject) => student.scores[subject.name] != null)
         return {
           ...student,
+          total,
           totalText: total != null ? total.toFixed(1) : hasScores ? '部分缺考' : '缺考',
           ranks: {},
         }
@@ -439,3 +773,35 @@ async function exportExcel(item?: string) {
   }
 }
 </script>
+
+<style scoped>
+.filter-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.filter-block {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.filter-block:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.filter-config {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 0 24px;
+}
+
+@media (max-width: 640px) {
+  .filter-config {
+    margin-left: 0;
+  }
+}
+</style>
