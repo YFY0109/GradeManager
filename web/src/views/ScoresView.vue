@@ -72,7 +72,7 @@
         v-for="sub in subjects"
         :key="sub.public_id"
         :label="`${sub.name}（${sub.full_score}）`"
-        width="110"
+        min-width="120"
       >
         <template #default="{ row }">
           <el-input

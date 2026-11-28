@@ -49,7 +49,13 @@
       >
         <el-table-column prop="student_no" label="考号" width="110" fixed />
         <el-table-column prop="name" label="姓名" width="100" fixed />
-        <el-table-column prop="class" label="班级" width="80" />
+        <el-table-column
+          v-if="!classPid"
+          prop="class"
+          label="班级"
+          width="80"
+          fixed
+        />
         <el-table-column label="对比成绩 / 满分" width="140">
           <template #default="{ row }">{{ formatScore(row.reference) }}</template>
         </el-table-column>
