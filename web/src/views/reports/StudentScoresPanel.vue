@@ -94,7 +94,13 @@
     >
       <el-table-column prop="student_no" label="考号" width="110" fixed />
       <el-table-column prop="name" label="姓名" width="100" fixed />
-      <el-table-column prop="class" label="班级" width="80" />
+      <el-table-column
+        v-if="scopeType === 'grade'"
+        prop="class"
+        label="班级"
+        width="80"
+        fixed
+      />
       <el-table-column v-if="canViewTotalForExam" label="总分" width="90">
         <template #default="{ row }">{{ row.totalText }}</template>
       </el-table-column>
@@ -107,6 +113,17 @@
         width="110"
       >
         <template #default="{ row }">{{ row.ranks[`${TOTAL}:${rank.key}`] ?? '—' }}</template>
+      </el-table-column>
+      <el-table-column
+        v-if="showFilteredRank"
+        label="筛选排名"
+        prop="filtered_rank"
+        sortable="custom"
+        width="100"
+      >
+        <template #default="{ row }">
+          {{ filteredRankMap.get(row.public_id) ?? '—' }}
+        </template>
       </el-table-column>
       <template v-for="subject in shownSubjects" :key="subject.public_id">
         <el-table-column :label="subject.name" width="80">
@@ -163,6 +180,7 @@ const props = defineProps<{
   exams: Exam[]
 }>()
 const auth = useAuthStore()
+const FILTERED_RANK = 'filtered_rank'
 
 const rows = shallowRef<ScoreRow[]>([])
 const examSubjects = ref<ExamSubject[]>([])
@@ -198,6 +216,35 @@ const subjects = computed(() => {
 const shownSubjects = computed(() =>
   subjects.value.filter((subject) => visibleSubjects.value.includes(subject.public_id)),
 )
+const showFilteredRank = computed(
+  () =>
+    shownSubjects.value.length > 0 &&
+    shownSubjects.value.length < examSubjects.value.length,
+)
+const filteredRankMap = computed(() => {
+  const ranks = new Map<string, number>()
+  if (!showFilteredRank.value) return ranks
+  const totals: { publicId: string; total: number }[] = []
+  for (const row of rows.value) {
+    const values = shownSubjects.value.map((subject) => row.scores[subject.name])
+    if (values.some((value) => value == null)) continue
+    totals.push({
+      publicId: row.public_id,
+      total: values.reduce<number>((sum, value) => sum + Number(value), 0),
+    })
+  }
+  totals.sort((a, b) => b.total - a.total)
+  let previous: number | null = null
+  let rank = 0
+  totals.forEach((item, index) => {
+    if (previous === null || item.total !== previous) {
+      rank = index + 1
+      previous = item.total
+    }
+    ranks.set(item.publicId, rank)
+  })
+  return ranks
+})
 const canViewTotalForExam = computed(() => canViewTotal(examSubjects.value))
 const canExportFull = computed(() =>
   auth.can('export') && auth.can('can_report_grade') && auth.user?.scope.all_subjects,
@@ -215,14 +262,20 @@ const sortedRows = computed(() => {
   const item = sort.value?.prop.split(':')[0]
   const hasSortColumn = item === TOTAL
     ? canViewTotalForExam.value
-    : shownSubjects.value.some((subject) => subject.public_id === item)
+    : item === FILTERED_RANK
+      ? showFilteredRank.value
+      : shownSubjects.value.some((subject) => subject.public_id === item)
   const activeSort = hasSortColumn ? sort.value : null
   const defaultRank = canRankClass.value ? 'class_rank' : 'grade_rank'
   const prop = activeSort?.prop ?? `${TOTAL}:${defaultRank}`
   const direction = activeSort?.order === 'descending' ? -1 : 1
   return [...rows.value].sort((a, b) => {
-    const rankA = a.ranks[prop] ?? Infinity
-    const rankB = b.ranks[prop] ?? Infinity
+    const rankA = item === FILTERED_RANK
+      ? filteredRankMap.value.get(a.public_id) ?? Infinity
+      : a.ranks[prop] ?? Infinity
+    const rankB = item === FILTERED_RANK
+      ? filteredRankMap.value.get(b.public_id) ?? Infinity
+      : b.ranks[prop] ?? Infinity
     if (rankA === rankB) return a.student_no.localeCompare(b.student_no)
     if (!Number.isFinite(rankA)) return 1
     if (!Number.isFinite(rankB)) return -1
