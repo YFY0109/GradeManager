@@ -1,6 +1,13 @@
 <template>
   <div>
     <div class="toolbar">
+      <el-input
+        v-model="keyword"
+        placeholder="搜索姓名或考号"
+        aria-label="搜索姓名或考号"
+        clearable
+        style="width: 220px; max-width: 100%"
+      />
       <el-select
         v-if="canViewTotalForExam"
         v-model="comparePid"
@@ -50,7 +57,7 @@
           </el-dropdown-menu>
         </template>
       </el-dropdown>
-      <span class="muted">共 {{ rows.length }} 人</span>
+      <span class="muted">{{ searchTerm ? '匹配' : '共' }} {{ matchedRows.length }} 人</span>
       <span v-if="loadError" class="muted" role="status">
         {{ loadError }}
         <el-button link type="primary" @click="reload += 1">重试</el-button>
@@ -65,7 +72,7 @@
       border
       stripe
       height="calc(100vh - 370px)"
-      empty-text="暂无学生数据"
+      :empty-text="searchTerm ? '未找到匹配的学生' : '暂无学生数据'"
       @sort-change="changeSort"
     >
       <el-table-column prop="student_no" label="考号" width="110" fixed />
@@ -123,7 +130,7 @@
     <TablePager
       :page="page"
       :page-size="pageSize"
-      :total="rows.length"
+      :total="matchedRows.length"
       @update:page="page = $event"
       @update:page-size="pageSize = $event"
     />
@@ -166,6 +173,7 @@ const loading = ref(false)
 const loadError = ref('')
 const reload = ref(0)
 const exporting = ref(false)
+const keyword = ref('')
 const page = ref(1)
 const pageSize = ref(50)
 const sort = ref<{ prop: string; order: SortOrder } | null>(null)
@@ -220,11 +228,19 @@ const sortedRows = computed(() => {
     return (rankA - rankB) * direction
   })
 })
+const searchTerm = computed(() => keyword.value.trim().toLowerCase())
+const matchedRows = computed(() => {
+  const term = searchTerm.value
+  if (!term) return sortedRows.value
+  return sortedRows.value.filter(
+    (row) => row.name.toLowerCase().includes(term) || row.student_no.toLowerCase().includes(term),
+  )
+})
 const pagedRows = computed(() => {
   const start = (page.value - 1) * pageSize.value
   const pageRows = pageSize.value === 0
-    ? sortedRows.value
-    : sortedRows.value.slice(start, start + pageSize.value)
+    ? matchedRows.value
+    : matchedRows.value.slice(start, start + pageSize.value)
   return pageRows.map((row) => {
     const compareTotal = compareTotals.value.get(row.public_id) ?? null
     const delta = row.total == null || compareTotal == null ? null : row.total - compareTotal
@@ -236,6 +252,10 @@ function changeSort({ prop, order }: { prop: string; order: SortOrder | null }) 
   sort.value = order ? { prop, order } : null
   page.value = 1
 }
+
+watch(searchTerm, () => {
+  page.value = 1
+})
 
 function canViewTotal(examSubjects: ExamSubject[]) {
   const allowed = allowedSubjectIds.value
