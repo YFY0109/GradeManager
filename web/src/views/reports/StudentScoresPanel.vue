@@ -348,9 +348,12 @@ watch(
           ranks: {},
         }
       })
+      // 先展示成绩明细，再异步补排名，避免多科排名请求期间表格空白。
+      rows.value = scoreRows
+      loading.value = false
       const rankLoadFailed = await loadRanks(examPid, classPid, scoreRows, signal)
       if (signal.aborted) return
-      rows.value = scoreRows
+      rows.value = [...scoreRows]
       if (rankLoadFailed) loadError.value = '部分排名加载失败。'
     } catch {
       if (!signal.aborted) loadError.value = '成绩明细加载失败。'
