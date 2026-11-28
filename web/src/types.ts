@@ -81,6 +81,7 @@ export interface RankRow {
   value: number
   grade_rank: number
   class_rank: number
+  tied_count: number
 }
 
 export interface RateRow {
@@ -141,7 +142,12 @@ export interface SubjectStat {
   avg: number | null
   max: number | null
   min: number | null
+  median: number | null
+  range: number | null
   stddev: number | null
+  cv: number | null
+  full_count: number
+  score_rate: number | null
   rank: number | null
   above_avg_rate: number | null
   excellent: number
@@ -180,6 +186,12 @@ export interface ClassOverview {
   subject_rank?: Record<string, number | null>
 }
 
+export interface CutoffLine {
+  name: string
+  total: number | null
+  subject_ratio: number | null
+}
+
 export interface StatsConfig {
   excellent: number
   good: number
@@ -189,6 +201,131 @@ export interface StatsConfig {
   ratio_levels: { name: string; threshold: number }[]
   rank_levels: { name: string; threshold: number }[]
   segment_count: number
+  top_n: number
+  critical_margin: number
+  subject_margin: number
+  cutoff_lines: CutoffLine[]
+}
+
+export interface AnalyticsStudent {
+  student_public_id: string
+  student_no: string
+  name: string
+  class: string
+  value: number
+}
+
+export interface TopBottomClass {
+  class: string
+  eligible: number
+  top_count: number
+  top_ratio: number | null
+  bottom_count: number
+  bottom_ratio: number | null
+}
+
+export interface RankBandClass {
+  class: string
+  eligible: number
+  counts: Record<string, number>
+  ratios: Record<string, number | null>
+}
+
+export interface ClassSegmentRow {
+  class: string
+  eligible: number
+  counts: Record<string, number>
+  ratios: Record<string, number | null>
+}
+
+export interface BalanceRow {
+  class: string
+  eligible: number
+  avg_std: number | null
+  avg_range: number | null
+}
+
+export interface DispersionValue {
+  participants: number
+  stddev: number | null
+  cv: number | null
+}
+
+export interface DispersionRow {
+  class: string
+  values: Record<string, DispersionValue>
+}
+
+export interface CriticalClassRow {
+  class: string
+  eligible?: number
+  participants?: number
+  count: number
+  ratio: number | null
+  students?: AnalyticsStudent[]
+}
+
+export interface CutoffSubjectStat {
+  online: number
+  participants: number
+  rate: number | null
+}
+
+export interface CutoffDoubleStat {
+  online: number | null
+  rate: number | null
+}
+
+export interface CutoffClassRow {
+  class: string
+  eligible: number
+  total_online: number | null
+  total_rate: number | null
+  contribution_rate: number | null
+  subjects: Record<string, CutoffSubjectStat>
+  double: Record<string, CutoffDoubleStat>
+}
+
+export interface CutoffLineResult {
+  name: string
+  total: number | null
+  subject_ratio: number | null
+  classes: CutoffClassRow[]
+}
+
+export interface OverviewAnalytics {
+  top_bottom: { n: number; classes: TopBottomClass[] } | null
+  rank_bands: { bands: number[]; classes: RankBandClass[] } | null
+  class_segments: {
+    segments: { label: string; min: number; max: number }[]
+    classes: ClassSegmentRow[]
+  } | null
+  balance: { subjects: string[]; classes: BalanceRow[] } | null
+  dispersion: { subjects: string[]; classes: DispersionRow[] } | null
+  critical: {
+    configured: boolean
+    lines: {
+      name: string
+      total: number | null
+      subject_ratio: number | null
+      margin: number
+      subject_margin: number
+    }[]
+    total: {
+      line: string
+      total: number
+      margin: number
+      classes: CriticalClassRow[]
+    }[]
+    subjects: {
+      line: string
+      subject: string
+      ratio: number
+      margin: number
+      classes: CriticalClassRow[]
+    }[]
+  }
+  cutoffs: { configured: boolean; lines: CutoffLineResult[] }
 }
 
 export interface Overview {
@@ -204,12 +341,19 @@ export interface Overview {
   total: SubjectStat | null
   grade_levels: GradeLevelStat[]
   segments: SegmentStat[]
+  subject_levels: Record<string, GradeLevelStat[]>
+  subject_segments: Record<string, SegmentStat[]>
+  absentees: {
+    subject: string
+    students: { student_public_id: string; student_no: string; name: string; class: string }[]
+  }[]
   advantages: {
     strong: string[]
     weak: string[]
     z_scores: Record<string, number>
   }
   classes: ClassOverview[]
+  analytics: OverviewAnalytics
 }
 
 export interface UserItem {

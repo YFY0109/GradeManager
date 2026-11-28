@@ -4,6 +4,7 @@ export const TOTAL_RANK_ITEM = 'total'
 
 export interface RankedStudent extends Student {
   ranks: Partial<Record<string, number>>
+  tied?: Partial<Record<string, number>>
 }
 
 export interface RankField {

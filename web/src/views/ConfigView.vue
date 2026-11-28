@@ -100,6 +100,77 @@
               />
             </el-form-item>
 
+            <el-form-item label="优秀生/学困生">
+              <el-input-number v-model="stats.top_n" :min="1" :max="100" />
+              <span class="muted hint">按总分取前 N 名 / 后 N 名</span>
+            </el-form-item>
+
+            <el-form-item label="临界生浮动分">
+              <el-input-number
+                v-model="stats.critical_margin"
+                :min="0"
+                :max="200"
+                :step="1"
+              />
+              <span class="muted hint">总分线 ± 该分值</span>
+            </el-form-item>
+
+            <el-form-item label="单科浮动比例">
+              <el-input-number
+                v-model="stats.subject_margin"
+                :min="0"
+                :max="0.3"
+                :step="0.01"
+                :precision="2"
+              />
+              <span class="muted hint">0.05 = 得分率 ± 5%</span>
+            </el-form-item>
+
+            <el-form-item label="分数线">
+              <div class="cutoff-list">
+                <div
+                  v-for="(line, index) in stats.cutoff_lines"
+                  :key="index"
+                  class="cutoff-row"
+                >
+                  <el-input
+                    v-model="line.name"
+                    placeholder="名称，如本科线"
+                    style="width: 150px"
+                  />
+                  <el-input-number
+                    v-model="line.total"
+                    :min="0"
+                    :max="2000"
+                    :controls="false"
+                    placeholder="总分线"
+                    style="width: 110px"
+                  />
+                  <el-input-number
+                    v-model="line.subject_ratio"
+                    :min="0.01"
+                    :max="1"
+                    :step="0.01"
+                    :precision="2"
+                    :controls="false"
+                    placeholder="单科得分率"
+                    style="width: 120px"
+                  />
+                  <el-button
+                    link
+                    type="danger"
+                    @click="stats.cutoff_lines.splice(index, 1)"
+                  >
+                    删除
+                  </el-button>
+                </div>
+                <el-button @click="addCutoffLine">添加分数线</el-button>
+                <div class="muted hint">
+                  总分线填绝对分；单科线填得分率（0.6 = 60%）。每条线至少填一项。
+                </div>
+              </div>
+            </el-form-item>
+
             <el-form-item>
               <el-button type="primary" :loading="saving" @click="saveStats">
                 保存统计口径
@@ -177,14 +248,41 @@ const stats = ref<StatsConfig>({
     { name: 'E', threshold: 1 },
   ],
   segment_count: 10,
+  top_n: 10,
+  critical_margin: 20,
+  subject_margin: 0.05,
+  cutoff_lines: [],
 })
+
+function addCutoffLine() {
+  stats.value.cutoff_lines.push({ name: '', total: null, subject_ratio: null })
+}
+
+function validateStats() {
+  for (const line of stats.value.cutoff_lines) {
+    if (!line.name.trim()) {
+      ElMessage.error('分数线名称不能为空')
+      return false
+    }
+    if (line.total == null && line.subject_ratio == null) {
+      ElMessage.error(`分数线「${line.name}」至少填写总分线或单科得分率`)
+      return false
+    }
+  }
+  return true
+}
 
 async function loadStats() {
   const { data } = await configApi.getStats()
-  stats.value = data
+  stats.value = {
+    ...stats.value,
+    ...data,
+    cutoff_lines: data.cutoff_lines ?? [],
+  }
 }
 
 async function saveStats() {
+  if (!validateStats()) return
   saving.value = true
   try {
     const { data } = await configApi.saveStats(stats.value)
@@ -239,6 +337,18 @@ onMounted(async () => {
 .level-name {
   width: 24px;
   font-weight: 600;
+}
+
+.cutoff-list {
+  width: 100%;
+}
+
+.cutoff-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 
 .json-editor :deep(textarea) {

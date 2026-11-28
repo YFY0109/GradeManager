@@ -1,4 +1,4 @@
-"""学情总览：指标、学科对比、等级分布、分段、优劣势、班级对比。"""
+"""学情总览：指标、学科对比、等级分布、分段、优劣势、班级对比、扩展分析。"""
 
 from __future__ import annotations
 
@@ -33,6 +33,24 @@ def _f(value) -> float | None:
     return float(value) if value is not None else None
 
 
+def _ratio(part: float | None, whole: float | None) -> float | None:
+    """安全比例：分母为 0/None 时返回 None。"""
+    if part is None or not whole:
+        return None
+    return part / whole
+
+
+def _median(values: list[float]) -> float | None:
+    ordered = sorted(values)
+    n = len(ordered)
+    if not n:
+        return None
+    middle = n // 2
+    if n % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2
+
+
 def _summary(values: list[float], config: StatsConfig, full_score: float):
     n = len(values)
     if not n:
@@ -41,7 +59,12 @@ def _summary(values: list[float], config: StatsConfig, full_score: float):
             "avg": None,
             "max": None,
             "min": None,
+            "median": None,
+            "range": None,
             "stddev": None,
+            "cv": None,
+            "full_count": 0,
+            "score_rate": None,
             "excellent": 0,
             "good": 0,
             "pass": 0,
@@ -62,7 +85,14 @@ def _summary(values: list[float], config: StatsConfig, full_score: float):
         "avg": avg,
         "max": max(values),
         "min": min(values),
+        "median": _median(values),
+        "range": max(values) - min(values),
         "stddev": stddev,
+        "cv": _ratio(stddev, avg),
+        "full_count": (
+            sum(1 for v in values if v >= full_score) if full_score > 0 else 0
+        ),
+        "score_rate": _ratio(avg, full_score),
         "excellent": excellent,
         "good": good,
         "pass": pass_count,
@@ -141,6 +171,16 @@ def _segments(
     return result
 
 
+def _segment_counts(values: list[float], full_score: float, count: int) -> list[int]:
+    """按 _segments 相同的倒序顺序返回各班人数。"""
+    buckets = [0] * count
+    if full_score:
+        for value in values:
+            idx = min(int(value / full_score * count), count - 1)
+            buckets[idx] += 1
+    return list(reversed(buckets))
+
+
 def _rank_class_averages(averages: list[tuple[str, float | None]]) -> dict[str, int]:
     """按均分降序排名，同分并列，无成绩的班级不排名。"""
     ranked = sorted(
@@ -157,6 +197,395 @@ def _rank_class_averages(averages: list[tuple[str, float | None]]) -> dict[str, 
         ranks[public_id] = rank
         previous = average
     return ranks
+
+
+def _complete_students(
+    students: list[dict], subjects: list[dict], score_map: dict
+) -> list[tuple[dict, float]]:
+    """返回所有考试科目齐全的学生及其总分。"""
+    complete = []
+    for student in students:
+        values = [score_map.get((student["id"], sub["id"])) for sub in subjects]
+        if values and all(value is not None for value in values):
+            complete.append((student, sum(values)))
+    return complete
+
+
+def _student_ranks(complete: list[tuple[dict, float]]) -> dict[int, int]:
+    """总分排名：降序，同分并列，返回 student_id -> 名次。"""
+    ordered = sorted(complete, key=lambda item: item[1], reverse=True)
+    ranks: dict[int, int] = {}
+    previous = None
+    rank = 0
+    for position, (student, total) in enumerate(ordered, start=1):
+        if total != previous:
+            rank = position
+        ranks[student["id"]] = rank
+        previous = total
+    return ranks
+
+
+def _student_brief(student: dict, value: float) -> dict:
+    return {
+        "student_public_id": str(student["public_id"]),
+        "student_no": student["student_no"],
+        "name": student["name"],
+        "class": student["class"],
+        "value": value,
+    }
+
+
+def _build_analytics(
+    *,
+    class_id: int | None,
+    caps: dict,
+    config: StatsConfig,
+    all_subjects: list[dict],
+    subjects: list[dict],
+    classes: list[dict],
+    students: list[dict],
+    score_map: dict,
+    full_total: float,
+) -> dict:
+    """构建扩展分析（全部基于已加载的内存数据）。"""
+    class_students = {
+        cls["id"]: [s for s in students if s["class_id"] == cls["id"]]
+        for cls in classes
+    }
+    grade_complete = _complete_students(students, all_subjects, score_map)
+    class_complete = {
+        cls["id"]: _complete_students(class_students[cls["id"]], all_subjects, score_map)
+        for cls in classes
+    }
+    grade_ranks = _student_ranks(grade_complete)
+    max_rank = max(grade_ranks.values()) if grade_ranks else 0
+    top_n = min(config.top_n, len(grade_complete)) if grade_complete else 0
+    visible_classes = (
+        classes if class_id is None else [c for c in classes if c["id"] == class_id]
+    )
+    can_rank = (
+        caps["can_rank_grade"] if class_id is None else caps["can_rank_class"]
+    )
+
+    # 优秀生 / 学困生
+    top_bottom = None
+    if can_rank and top_n and caps["view_total"]:
+        rows = []
+        for cls in visible_classes:
+            items = class_complete[cls["id"]]
+            eligible = len(items)
+            top_count = sum(
+                1
+                for student, _total in items
+                if grade_ranks.get(student["id"], 0) <= top_n
+            )
+            bottom_count = sum(
+                1
+                for student, _total in items
+                if max_rank and grade_ranks.get(student["id"], 0) > max_rank - top_n
+            )
+            rows.append(
+                {
+                    "class": cls["name"],
+                    "eligible": eligible,
+                    "top_count": top_count,
+                    "top_ratio": _ratio(top_count, eligible),
+                    "bottom_count": bottom_count,
+                    "bottom_ratio": _ratio(bottom_count, eligible),
+                }
+            )
+        top_bottom = {"n": top_n, "classes": rows}
+
+    # 名次段人数
+    rank_bands = None
+    if can_rank and grade_ranks and caps["view_total"]:
+        bands = [10, 50, 100, 200]
+        rows = []
+        for cls in visible_classes:
+            items = class_complete[cls["id"]]
+            eligible = len(items)
+            counts = {
+                str(band): sum(
+                    1
+                    for student, _total in items
+                    if grade_ranks.get(student["id"], 0) <= band
+                )
+                for band in bands
+            }
+            rows.append(
+                {
+                    "class": cls["name"],
+                    "eligible": eligible,
+                    "counts": counts,
+                    "ratios": {
+                        band: _ratio(count, eligible)
+                        for band, count in counts.items()
+                    },
+                }
+            )
+        rank_bands = {"bands": bands, "classes": rows}
+
+    # 分数段按班（总分）
+    class_segments = None
+    if caps["view_total"] and full_total:
+        segment_meta = _segments(
+            [total for _student, total in grade_complete],
+            full_total,
+            config.segment_count,
+        )
+        labels = [item["label"] for item in segment_meta]
+        rows = []
+        for cls in visible_classes:
+            values = [total for _student, total in class_complete[cls["id"]]]
+            counts_list = _segment_counts(values, full_total, config.segment_count)
+            counts = dict(zip(labels, counts_list))
+            rows.append(
+                {
+                    "class": cls["name"],
+                    "eligible": len(values),
+                    "counts": counts,
+                    "ratios": {
+                        label: _ratio(count, len(values))
+                        for label, count in counts.items()
+                    },
+                }
+            )
+        class_segments = {
+            "segments": [
+                {"label": item["label"], "min": item["min"], "max": item["max"]}
+                for item in segment_meta
+            ],
+            "classes": rows,
+        }
+
+    # 学科均衡度（学生各科得分率的标准差/极差，按班汇总）
+    balance = None
+    if caps["view_subject"] and len(subjects) >= 2:
+        rows = []
+        for cls in visible_classes:
+            stds = []
+            ranges = []
+            for student, _total in class_complete[cls["id"]]:
+                rates = []
+                for sub in subjects:
+                    score = score_map.get((student["id"], sub["id"]))
+                    if score is None:
+                        rates = []
+                        break
+                    rates.append(score / float(sub["full_score"]))
+                if len(rates) != len(subjects):
+                    continue
+                mean = sum(rates) / len(rates)
+                stds.append(
+                    math.sqrt(sum((rate - mean) ** 2 for rate in rates) / len(rates))
+                )
+                ranges.append(max(rates) - min(rates))
+            rows.append(
+                {
+                    "class": cls["name"],
+                    "eligible": len(stds),
+                    "avg_std": (sum(stds) / len(stds)) if stds else None,
+                    "avg_range": (sum(ranges) / len(ranges)) if ranges else None,
+                }
+            )
+        balance = {"subjects": [sub["name"] for sub in subjects], "classes": rows}
+
+    # 班级离散度（各班各科标准差/变异系数）
+    dispersion = None
+    if caps["view_subject"] and subjects:
+        rows = []
+        for cls in visible_classes:
+            cls_students = class_students[cls["id"]]
+            values = {}
+            for sub in subjects:
+                scores = [
+                    score_map[(s["id"], sub["id"])]
+                    for s in cls_students
+                    if score_map.get((s["id"], sub["id"])) is not None
+                ]
+                n = len(scores)
+                if n:
+                    avg = sum(scores) / n
+                    stddev = math.sqrt(
+                        sum((value - avg) ** 2 for value in scores) / n
+                    )
+                else:
+                    avg = None
+                    stddev = None
+                values[sub["name"]] = {
+                    "participants": n,
+                    "stddev": stddev,
+                    "cv": _ratio(stddev, avg),
+                }
+            rows.append({"class": cls["name"], "values": values})
+        dispersion = {
+            "subjects": [sub["name"] for sub in subjects],
+            "classes": rows,
+        }
+
+    # 临界生对比
+    lines = config.cutoff_lines
+    critical = {
+        "configured": bool(lines),
+        "lines": [],
+        "total": [],
+        "subjects": [],
+    }
+    for line in lines:
+        critical["lines"].append(
+            {
+                "name": line.name,
+                "total": line.total,
+                "subject_ratio": line.subject_ratio,
+                "margin": config.critical_margin,
+                "subject_margin": config.subject_margin,
+            }
+        )
+        if caps["view_total"] and line.total is not None:
+            class_rows = []
+            for cls in visible_classes:
+                items = class_complete[cls["id"]]
+                hits = [
+                    (student, total)
+                    for student, total in items
+                    if abs(total - line.total) <= config.critical_margin
+                ]
+                row = {
+                    "class": cls["name"],
+                    "eligible": len(items),
+                    "count": len(hits),
+                    "ratio": _ratio(len(hits), len(items)),
+                }
+                if class_id is not None:
+                    row["students"] = [
+                        _student_brief(student, total) for student, total in hits
+                    ]
+                class_rows.append(row)
+            critical["total"].append(
+                {
+                    "line": line.name,
+                    "total": line.total,
+                    "margin": config.critical_margin,
+                    "classes": class_rows,
+                }
+            )
+        if caps["view_subject"] and line.subject_ratio is not None:
+            for sub in subjects:
+                full_score = float(sub["full_score"])
+                class_rows = []
+                for cls in visible_classes:
+                    hits = []
+                    valid = 0
+                    for student in class_students[cls["id"]]:
+                        score = score_map.get((student["id"], sub["id"]))
+                        if score is None:
+                            continue
+                        valid += 1
+                        if abs(score / full_score - line.subject_ratio) <= config.subject_margin:
+                            hits.append((student, score))
+                    row = {
+                        "class": cls["name"],
+                        "participants": valid,
+                        "count": len(hits),
+                        "ratio": _ratio(len(hits), valid),
+                    }
+                    if class_id is not None:
+                        row["students"] = [
+                            _student_brief(student, score) for student, score in hits
+                        ]
+                    class_rows.append(row)
+                critical["subjects"].append(
+                    {
+                        "line": line.name,
+                        "subject": sub["name"],
+                        "ratio": line.subject_ratio,
+                        "margin": config.subject_margin,
+                        "classes": class_rows,
+                    }
+                )
+
+    # 进线分析
+    cutoffs = {"configured": bool(lines), "lines": []}
+    for line in lines:
+        grade_online = {
+            student["id"]
+            for student, total in grade_complete
+            if line.total is not None and total >= line.total
+        }
+        class_rows = []
+        for cls in visible_classes:
+            items = class_complete[cls["id"]]
+            eligible = len(items)
+            row = {"class": cls["name"], "eligible": eligible}
+            if caps["view_total"] and line.total is not None:
+                online = sum(1 for _student, total in items if total >= line.total)
+                row.update(
+                    {
+                        "total_online": online,
+                        "total_rate": _ratio(online, eligible),
+                        "contribution_rate": _ratio(online, len(grade_online)),
+                    }
+                )
+            else:
+                row.update(
+                    {
+                        "total_online": None,
+                        "total_rate": None,
+                        "contribution_rate": None,
+                    }
+                )
+            subject_rows = {}
+            double_rows = {}
+            if caps["view_subject"] and line.subject_ratio is not None:
+                for sub in subjects:
+                    full_score = float(sub["full_score"])
+                    threshold = full_score * line.subject_ratio
+                    valid = [
+                        score_map[(s["id"], sub["id"])]
+                        for s in class_students[cls["id"]]
+                        if score_map.get((s["id"], sub["id"])) is not None
+                    ]
+                    online_count = sum(1 for value in valid if value >= threshold)
+                    subject_rows[sub["name"]] = {
+                        "online": online_count,
+                        "participants": len(valid),
+                        "rate": _ratio(online_count, len(valid)),
+                    }
+                    if line.total is not None and caps["view_total"]:
+                        double_count = sum(
+                            1
+                            for student, total in items
+                            if total >= line.total
+                            and score_map.get((student["id"], sub["id"])) is not None
+                            and score_map[(student["id"], sub["id"])] >= threshold
+                        )
+                        double_rows[sub["name"]] = {
+                            "online": double_count,
+                            "rate": _ratio(double_count, eligible),
+                        }
+                    else:
+                        double_rows[sub["name"]] = {"online": None, "rate": None}
+            row["subjects"] = subject_rows
+            row["double"] = double_rows
+            class_rows.append(row)
+        cutoffs["lines"].append(
+            {
+                "name": line.name,
+                "total": line.total,
+                "subject_ratio": line.subject_ratio,
+                "classes": class_rows,
+            }
+        )
+
+    return {
+        "top_bottom": top_bottom,
+        "rank_bands": rank_bands,
+        "class_segments": class_segments,
+        "balance": balance,
+        "dispersion": dispersion,
+        "critical": critical,
+        "cutoffs": cutoffs,
+    }
 
 
 @router.get("/exams/{exam_pid}/overview")
@@ -202,7 +631,8 @@ def overview(
     ).fetchall()
     students = conn.execute(
         """
-        SELECT st.id, st.student_no, st.name, st.class_id, c.name AS class
+        SELECT st.id, st.public_id, st.student_no, st.name, st.class_id,
+               c.name AS class
         FROM students st
         JOIN classes c ON c.id = st.class_id
         WHERE st.status = 'active'
@@ -227,7 +657,6 @@ def overview(
         if class_id is None
         else [s for s in students if s["class_id"] == class_id]
     )
-    scoped_ids = {s["id"] for s in scoped_students}
     full_total = sum(float(s["full_score"]) for s in all_subjects)
 
     # 年级各科均分/标准差（用于超均率与 z 分数）
@@ -250,20 +679,23 @@ def overview(
             ),
         }
 
-    # 学科统计
+    # 学科统计 + 单科等级/分段
     subject_rows = []
+    subject_levels: dict[str, list[dict]] = {}
+    subject_segments: dict[str, list[dict]] = {}
     for sub in subjects:
+        full_score = float(sub["full_score"])
         values = [
             score_map[(s["id"], sub["id"])]
             for s in scoped_students
             if score_map.get((s["id"], sub["id"])) is not None
         ]
-        summary = _summary(values, config, float(sub["full_score"]))
+        summary = _summary(values, config, full_score)
         summary.update(
             {
                 "public_id": str(sub["public_id"]),
                 "name": sub["name"],
-                "full_score": float(sub["full_score"]),
+                "full_score": full_score,
                 "absent": len(scoped_students) - summary["participants"],
                 "above_avg_rate": (
                     summary["avg"] / grade_subject[sub["id"]]["avg"]
@@ -274,6 +706,28 @@ def overview(
             }
         )
         subject_rows.append(summary)
+        subject_levels[sub["name"]] = _grade_distribution(
+            values, full_score, config
+        )
+        subject_segments[sub["name"]] = _segments(
+            values, full_score, config.segment_count
+        )
+
+    # 缺考名单（按科目）
+    absentees = []
+    for sub in subjects:
+        missing = [
+            {
+                "student_public_id": str(s["public_id"]),
+                "student_no": s["student_no"],
+                "name": s["name"],
+                "class": s["class"],
+            }
+            for s in scoped_students
+            if score_map.get((s["id"], sub["id"])) is None
+        ]
+        if missing:
+            absentees.append({"subject": sub["name"], "students": missing})
 
     # 总分（齐全学生）
     complete = []
@@ -298,7 +752,7 @@ def overview(
     )
 
     # 等级分布/分段（总分）；无总分权限时清空
-    if capabilities_for(user)["view_total"]:
+    if caps["view_total"]:
         grade_levels = _grade_distribution(total_values, full_total, config)
         segments = _segments(total_values, full_total, config.segment_count)
     else:
@@ -393,16 +847,26 @@ def overview(
 
     for row in subject_rows:
         row["rank"] = None
-    current_public = None
     if class_id is not None:
         current_class = next(row for row in class_rows if row["id"] == class_id)
-        current_public = current_class["class_public_id"]
         for row in subject_rows:
             row["rank"] = current_class["subject_rank"].get(row["name"])
         # 班级报告只返回当前班级的汇总。
         class_rows = [current_class]
     for row in class_rows:
         row.pop("id", None)
+
+    analytics = _build_analytics(
+        class_id=class_id,
+        caps=caps,
+        config=config,
+        all_subjects=all_subjects,
+        subjects=subjects,
+        classes=classes,
+        students=students,
+        score_map=score_map,
+        full_total=full_total,
+    )
 
     return {
         "exam_public_id": str(exam_pid),
@@ -428,6 +892,10 @@ def overview(
         "total": total_summary,
         "grade_levels": grade_levels,
         "segments": segments,
+        "subject_levels": subject_levels,
+        "subject_segments": subject_segments,
+        "absentees": absentees,
         "advantages": advantages,
         "classes": class_rows,
+        "analytics": analytics,
     }

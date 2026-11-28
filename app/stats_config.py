@@ -19,6 +19,14 @@ class GradeLevel(StrictModel):
     threshold: float = Field(ge=0, le=1)
 
 
+class CutoffLine(StrictModel):
+    """分数线：总分线用绝对分，单科线用得分率。"""
+
+    name: str = Field(min_length=1, max_length=40)
+    total: float | None = Field(default=None, ge=0)
+    subject_ratio: float | None = Field(default=None, gt=0, le=1)
+
+
 class StatsConfig(StrictModel):
     excellent: float = Field(default=0.85, gt=0, le=1)
     good: float = Field(default=0.70, gt=0, le=1)
@@ -48,6 +56,13 @@ class StatsConfig(StrictModel):
         min_length=1,
     )
     segment_count: int = Field(default=10, ge=2, le=20)
+    # 优秀生/学困生人数（前 N / 后 N）
+    top_n: int = Field(default=10, ge=1, le=100)
+    # 临界生：总分浮动分、单科得分率浮动比例
+    critical_margin: float = Field(default=20, ge=0, le=200)
+    subject_margin: float = Field(default=0.05, ge=0, le=0.3)
+    # 进线分析分数线；为空时前端提示到配置页设置
+    cutoff_lines: list[CutoffLine] = Field(default_factory=list, max_length=10)
 
 
 def load_stats_config(conn) -> StatsConfig:

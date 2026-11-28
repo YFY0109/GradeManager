@@ -34,6 +34,31 @@
             <div class="stat-value">{{ fixed(data.total.min, 1) }}</div>
           </el-card>
         </el-col>
+        <el-col :xs="12" :sm="6">
+          <el-card>
+            <div class="stat-label">中位数</div>
+            <div class="stat-value">{{ fixed(data.total.median, 1) }}</div>
+          </el-card>
+        </el-col>
+        <el-col :xs="12" :sm="6">
+          <el-card>
+            <div class="stat-label">标准差</div>
+            <div class="stat-value">{{ fixed(data.total.stddev, 2) }}</div>
+          </el-card>
+        </el-col>
+        <el-col :xs="12" :sm="6">
+          <el-card>
+            <div class="stat-label">变异系数</div>
+            <div class="stat-value">{{ pct(data.total.cv) }}</div>
+            <div class="stat-sub">标准差 ÷ 平均分</div>
+          </el-card>
+        </el-col>
+        <el-col :xs="12" :sm="6">
+          <el-card>
+            <div class="stat-label">满分人数</div>
+            <div class="stat-value">{{ data.total.full_count }}</div>
+          </el-card>
+        </el-col>
       </el-row>
 
       <el-card class="block">
@@ -41,7 +66,20 @@
         <el-table :data="data.subjects" border size="small">
           <el-table-column prop="name" label="学科" width="80" fixed />
           <el-table-column prop="participants" label="实考" width="70" />
-          <el-table-column prop="absent" label="缺考" width="70" />
+          <el-table-column label="缺考" width="70">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.absent"
+                link
+                type="primary"
+                size="small"
+                @click="openAbsentees(row.name)"
+              >
+                {{ row.absent }}
+              </el-button>
+              <span v-else>0</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="full_score" label="满分" width="70" />
           <el-table-column label="最高" width="70">
             <template #default="{ row }">{{ fixed(row.max, 1) }}</template>
@@ -51,6 +89,24 @@
           </el-table-column>
           <el-table-column label="均分" width="80">
             <template #default="{ row }">{{ fixed(row.avg, 2) }}</template>
+          </el-table-column>
+          <el-table-column label="得分率" width="80">
+            <template #default="{ row }">{{ pct(row.score_rate) }}</template>
+          </el-table-column>
+          <el-table-column label="中位数" width="80">
+            <template #default="{ row }">{{ fixed(row.median, 1) }}</template>
+          </el-table-column>
+          <el-table-column label="极差" width="75">
+            <template #default="{ row }">{{ fixed(row.range, 1) }}</template>
+          </el-table-column>
+          <el-table-column label="标准差" width="80">
+            <template #default="{ row }">{{ fixed(row.stddev, 1) }}</template>
+          </el-table-column>
+          <el-table-column label="变异系数" width="85">
+            <template #default="{ row }">{{ pct(row.cv) }}</template>
+          </el-table-column>
+          <el-table-column label="满分人数" width="85">
+            <template #default="{ row }">{{ row.full_count }}</template>
           </el-table-column>
           <el-table-column v-if="scopeType === 'class' && canRankGrade" label="排名" width="70">
             <template #default="{ row }">{{ row.rank ?? '—' }}</template>
@@ -70,22 +126,55 @@
           <el-table-column v-if="scopeType === 'class'" label="超均率" width="85">
             <template #default="{ row }">{{ pct(row.above_avg_rate) }}</template>
           </el-table-column>
-          <el-table-column label="标准差" width="80">
-            <template #default="{ row }">{{ fixed(row.stddev, 1) }}</template>
-          </el-table-column>
         </el-table>
       </el-card>
 
       <el-row v-if="data.total" :gutter="16" class="block">
         <el-col :xs="24" :md="12">
           <el-card>
-            <template #header>学业等级分布</template>
+            <template #header>
+              <div class="chart-header">
+                <span>学业等级分布</span>
+                <el-select
+                  v-model="levelSubject"
+                  size="small"
+                  style="width: 120px"
+                  aria-label="等级分布科目"
+                >
+                  <el-option label="总分" value="" />
+                  <el-option
+                    v-for="name in subjectNames"
+                    :key="name"
+                    :label="name"
+                    :value="name"
+                  />
+                </el-select>
+              </div>
+            </template>
             <div ref="levelRef" class="chart"></div>
           </el-card>
         </el-col>
         <el-col :xs="24" :md="12">
           <el-card>
-            <template #header>成绩分段对比</template>
+            <template #header>
+              <div class="chart-header">
+                <span>成绩分段对比</span>
+                <el-select
+                  v-model="segmentSubject"
+                  size="small"
+                  style="width: 120px"
+                  aria-label="分段对比科目"
+                >
+                  <el-option label="总分" value="" />
+                  <el-option
+                    v-for="name in subjectNames"
+                    :key="name"
+                    :label="name"
+                    :value="name"
+                  />
+                </el-select>
+              </div>
+            </template>
             <div ref="segmentRef" class="chart"></div>
           </el-card>
         </el-col>
@@ -217,9 +306,30 @@
           </el-table-column>
         </el-table>
       </el-card>
+
+      <AdvancedStatsPanel
+        v-if="data.analytics"
+        :data="data"
+        :scope-type="scopeType"
+      />
     </template>
 
     <el-empty v-else-if="!loading" description="暂无统计数据" />
+
+    <el-dialog
+      v-model="absentDialog"
+      :title="`${absentSubject}缺考名单`"
+      width="560px"
+    >
+      <el-table :data="absentStudents" border size="small" max-height="420">
+        <el-table-column prop="student_no" label="考号" width="130" />
+        <el-table-column prop="name" label="姓名" width="110" />
+        <el-table-column prop="class" label="班级" />
+      </el-table>
+      <template #footer>
+        <el-button @click="absentDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -237,6 +347,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { examApi, overviewApi } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import type { ClassOverview, ClassStats, Overview, Stats } from '../../types'
+import AdvancedStatsPanel from './AdvancedStatsPanel.vue'
 
 echarts.use([
   BarChart,
@@ -260,6 +371,10 @@ const data = ref<Overview | null>(null)
 const classStats = ref<Stats | null>(null)
 const classStatsSubject = ref('')
 const loading = ref(false)
+const levelSubject = ref('')
+const segmentSubject = ref('')
+const absentDialog = ref(false)
+const absentSubject = ref('')
 
 const levelRef = ref<HTMLDivElement>()
 const segmentRef = ref<HTMLDivElement>()
@@ -270,6 +385,30 @@ let radarChart: ReturnType<typeof echarts.init> | null = null
 
 const canRankGrade = computed(() => auth.can('can_rank_grade'))
 const canViewTotal = computed(() => auth.can('view_total'))
+const subjectNames = computed(() =>
+  (data.value?.subjects ?? []).map((subject) => subject.name),
+)
+const levelItems = computed(() =>
+  levelSubject.value
+    ? ((data.value?.subject_levels ?? {})[levelSubject.value] ?? [])
+    : (data.value?.grade_levels ?? []),
+)
+const segmentItems = computed(() =>
+  segmentSubject.value
+    ? ((data.value?.subject_segments ?? {})[segmentSubject.value] ?? [])
+    : (data.value?.segments ?? []),
+)
+const absentStudents = computed(
+  () =>
+    (data.value?.absentees ?? []).find(
+      (item) => item.subject === absentSubject.value,
+    )?.students ?? [],
+)
+
+function openAbsentees(subject: string) {
+  absentSubject.value = subject
+  absentDialog.value = true
+}
 const classSortBy = ref('class')
 const classSortOrder = ref<'asc' | 'desc'>('asc')
 const classCollator = new Intl.Collator('zh-CN', { numeric: true })
@@ -392,6 +531,9 @@ async function load() {
     ])
     data.value = res
     classStats.value = statsResult?.data ?? null
+    const names = res.subjects.map((subject) => subject.name)
+    if (!names.includes(levelSubject.value)) levelSubject.value = ''
+    if (!names.includes(segmentSubject.value)) segmentSubject.value = ''
     const subjectNames = Object.keys(classStats.value?.grade.subject_rates ?? {})
     if (classStats.value && !subjectNames.includes(classStatsSubject.value)) {
       classStatsSubject.value = subjectNames[0] ?? ''
@@ -407,7 +549,7 @@ function renderCharts() {
   const current = data.value
   if (!current) return
 
-  if (levelRef.value && current.grade_levels.length) {
+  if (levelRef.value && levelItems.value.length) {
     levelChart?.dispose()
     levelChart = echarts.init(levelRef.value)
     levelChart.setOption({
@@ -415,14 +557,14 @@ function renderCharts() {
       grid: { left: 48, right: 24, top: 30, bottom: 40 },
       xAxis: {
         type: 'category',
-        data: current.grade_levels.map((item) => item.name),
+        data: levelItems.value.map((item) => item.name),
       },
       yAxis: { type: 'value', name: '人数' },
       series: [
         {
           name: '人数',
           type: 'bar',
-          data: current.grade_levels.map((item) => item.count),
+          data: levelItems.value.map((item) => item.count),
           barMaxWidth: 48,
           itemStyle: { color: '#409eff' },
           label: { show: true, position: 'top' },
@@ -431,7 +573,7 @@ function renderCharts() {
     })
   }
 
-  if (segmentRef.value && current.segments.length) {
+  if (segmentRef.value && segmentItems.value.length) {
     segmentChart?.dispose()
     segmentChart = echarts.init(segmentRef.value)
     segmentChart.setOption({
@@ -439,7 +581,7 @@ function renderCharts() {
       grid: { left: 48, right: 24, top: 30, bottom: 50 },
       xAxis: {
         type: 'category',
-        data: current.segments.map((item) => item.label),
+        data: segmentItems.value.map((item) => item.label),
         axisLabel: { rotate: 35, fontSize: 10 },
       },
       yAxis: { type: 'value', name: '人数' },
@@ -448,7 +590,7 @@ function renderCharts() {
           name: '人数',
           type: 'line',
           smooth: true,
-          data: current.segments.map((item) => item.count),
+          data: segmentItems.value.map((item) => item.count),
           areaStyle: { opacity: 0.15 },
           itemStyle: { color: '#67c23a' },
         },
@@ -494,6 +636,11 @@ watch(
   () => [props.examPid, props.scopeType, props.classPid],
   () => load(),
 )
+
+watch([levelSubject, segmentSubject], async () => {
+  await nextTick()
+  renderCharts()
+})
 
 onMounted(async () => {
   window.addEventListener('resize', handleResize)
@@ -558,6 +705,13 @@ onBeforeUnmount(() => {
 .chart {
   width: 100%;
   height: 320px;
+}
+
+.chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .chart-radar {

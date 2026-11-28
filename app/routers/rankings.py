@@ -135,11 +135,12 @@ def query_rank(
         , ranked AS (
             SELECT *,
                    RANK() OVER (ORDER BY value DESC) AS grade_rank,
-                   RANK() OVER (PARTITION BY class_id ORDER BY value DESC) AS class_rank
+                   RANK() OVER (PARTITION BY class_id ORDER BY value DESC) AS class_rank,
+                   COUNT(*) OVER (PARTITION BY value) AS tied_count
             FROM base
         )
         SELECT student_public_id, student_no, name, class_public_id, class,
-               value, grade_rank, class_rank
+               value, grade_rank, class_rank, tied_count
         FROM ranked
         WHERE (%(class_id)s::int IS NULL OR class_id = %(class_id)s)
           AND (%(class_ids)s::int[] IS NULL OR class_id = ANY(%(class_ids)s))

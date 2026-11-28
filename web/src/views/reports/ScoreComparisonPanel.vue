@@ -36,6 +36,22 @@
         对比名次加载失败。<el-button link type="primary" @click="reloadRanks += 1">重试</el-button>
       </p>
 
+      <div v-if="summary" class="comparison-summary">
+        <span>可比 {{ summary.comparable }} 人</span>
+        <span class="up">进步 {{ summary.improved }}</span>
+        <span class="down">退步 {{ summary.declined }}</span>
+        <span>持平 {{ summary.flat }}</span>
+        <span>
+          平均变化 {{ formatChange(summary.average) }}{{ summary.unit }}
+        </span>
+        <span v-if="summary.best && summary.best.change > 0">
+          最大进步 {{ summary.best.name }} {{ formatChange(summary.best.change) }}
+        </span>
+        <span v-if="summary.worst && summary.worst.change < 0">
+          最大退步 {{ summary.worst.name }} {{ formatChange(summary.worst.change) }}
+        </span>
+      </div>
+
       <el-table
         :key="item.id"
         v-loading="loadingRanks"
@@ -155,7 +171,7 @@ const rankClassPid = computed(() =>
   props.rankFields.some((rank) => rank.key === 'class_rank') ? props.classPid : undefined,
 )
 
-const pagedRows = computed(() => {
+const allRows = computed(() => {
   const metric = item.value
   const other = reference.value
   if (!metric || !other) return []
@@ -197,8 +213,51 @@ const pagedRows = computed(() => {
       return order.order === 'ascending' ? first - second : second - first
     })
   }
+  return rows
+})
+
+const pagedRows = computed(() => {
+  const rows = allRows.value
   const start = (page.value - 1) * pageSize.value
   return pageSize.value === 0 ? rows : rows.slice(start, start + pageSize.value)
+})
+
+const summary = computed(() => {
+  const metric = item.value
+  if (!metric) return null
+  const rows = allRows.value.filter(
+    (row) => row.current.score != null && row.reference.score != null,
+  )
+  const change = (row: (typeof rows)[number]) =>
+    metric.comparePoints ? row.pointsChange : row.rateChange
+  let improved = 0
+  let declined = 0
+  let flat = 0
+  let total = 0
+  let counted = 0
+  let best: { name: string; change: number } | null = null
+  let worst: { name: string; change: number } | null = null
+  for (const row of rows) {
+    const value = change(row)
+    if (value == null) continue
+    counted += 1
+    total += value
+    if (value > 0) improved += 1
+    else if (value < 0) declined += 1
+    else flat += 1
+    if (!best || value > best.change) best = { name: row.name, change: value }
+    if (!worst || value < worst.change) worst = { name: row.name, change: value }
+  }
+  return {
+    comparable: rows.length,
+    improved,
+    declined,
+    flat,
+    average: counted ? total / counted : null,
+    best,
+    worst,
+    unit: metric.comparePoints ? '分' : '个百分点',
+  }
 })
 
 const numberFormat = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 })
@@ -321,6 +380,27 @@ watch(
 }
 
 .delta-down {
+  color: #f56c6c;
+  font-weight: 600;
+}
+
+.comparison-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: #f5f7fa;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.comparison-summary .up {
+  color: #67c23a;
+  font-weight: 600;
+}
+
+.comparison-summary .down {
   color: #f56c6c;
   font-weight: 600;
 }

@@ -115,7 +115,11 @@
         sortable="custom"
         width="110"
       >
-        <template #default="{ row }">{{ row.ranks[`${TOTAL}:${rank.key}`] ?? '—' }}</template>
+        <template #default="{ row }">
+          <span :title="rankTitle(row, `${TOTAL}:${rank.key}`)">
+            {{ row.ranks[`${TOTAL}:${rank.key}`] ?? '—' }}
+          </span>
+        </template>
       </el-table-column>
       <el-table-column
         v-if="showFilteredRank"
@@ -141,7 +145,9 @@
           width="110"
         >
           <template #default="{ row }">
-            {{ row.ranks[`${subject.public_id}:${rank.key}`] ?? '—' }}
+            <span :title="rankTitle(row, `${subject.public_id}:${rank.key}`)">
+              {{ row.ranks[`${subject.public_id}:${rank.key}`] ?? '—' }}
+            </span>
           </template>
         </el-table-column>
       </template>
@@ -496,6 +502,11 @@ function subjectName(subjectPid: string) {
   return subjects.value.find((item) => item.public_id === subjectPid)?.name || '未选择科目'
 }
 
+function rankTitle(row: ScoreRow, key: string) {
+  const tied = row.tied?.[key]
+  return tied && tied > 1 ? `并列 ${tied} 人` : undefined
+}
+
 function removeSubjectRange(subjectPid: string) {
   draftFilters.value.subjectScore.items = draftFilters.value.subjectScore.items.filter(
     (item) => item.subjectPid !== subjectPid,
@@ -726,7 +737,11 @@ async function loadRanks(
       for (const entry of data) {
         const student = byStudent.get(entry.student_public_id)
         if (!student) continue
-        for (const field of fields) student.ranks[`${item}:${field.key}`] = entry[field.key]
+        for (const field of fields) {
+          const key = `${item}:${field.key}`
+          student.ranks[key] = entry[field.key]
+          student.tied![key] = entry.tied_count
+        }
       }
     }
   }
@@ -775,6 +790,7 @@ watch(
           total,
           totalText: total != null ? total.toFixed(1) : hasScores ? '部分缺考' : '缺考',
           ranks: {},
+          tied: {},
         }
       })
       // 先展示成绩明细，再异步补排名，避免多科排名请求期间表格空白。
