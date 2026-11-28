@@ -175,7 +175,9 @@ export interface ClassOverview {
   students: number
   complete: number
   total_avg: number | null
+  total_rank?: number | null
   subject_avg: Record<string, number | null>
+  subject_rank?: Record<string, number | null>
 }
 
 export interface StatsConfig {

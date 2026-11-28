@@ -125,25 +125,42 @@
         </el-row>
       </el-card>
 
-      <el-card v-if="scopeType === 'grade'" class="block">
+      <el-card v-if="scopeType === 'grade' && data.scope.type === 'grade'" class="block">
         <template #header>班级成绩对比</template>
-        <el-table :data="data.classes" border size="small">
+        <div class="toolbar">
+          <span class="muted">排序</span>
+          <el-select
+            v-model="classSortBy"
+            aria-label="班级成绩对比排序指标"
+            style="width: 160px"
+            @change="changeClassSort"
+          >
+            <el-option label="班级" value="class" />
+            <el-option
+              v-for="metric in classSortMetrics"
+              :key="metric.key"
+              :label="metric.label"
+              :value="metric.key"
+            />
+          </el-select>
+          <el-radio-group v-model="classSortOrder" size="small" aria-label="排序方向">
+            <el-radio-button value="asc">升序</el-radio-button>
+            <el-radio-button value="desc">降序</el-radio-button>
+          </el-radio-group>
+          <span v-if="canRankGrade" class="muted">均分相同并列，无成绩不排名</span>
+        </div>
+        <el-table :data="sortedClassRows" row-key="class_public_id" border size="small">
           <el-table-column prop="class" label="班级" width="90" fixed />
           <el-table-column prop="students" label="人数" width="80" />
           <el-table-column prop="complete" label="齐全" width="80" />
-          <el-table-column v-if="canViewTotal" label="总分均" width="90">
-            <template #default="{ row }">{{ fixed(row.total_avg, 2) }}</template>
-          </el-table-column>
-          <el-table-column
-            v-for="name in subjectNames"
-            :key="name"
-            :label="`${name}均`"
-            width="90"
-          >
-            <template #default="{ row }">
-              {{ fixed(row.subject_avg[name], 2) }}
-            </template>
-          </el-table-column>
+          <template v-for="column in classMeanColumns" :key="column.key">
+            <el-table-column :label="`${column.label}均分`" width="105">
+              <template #default="{ row }">{{ fixed(column.average(row), 2) }}</template>
+            </el-table-column>
+            <el-table-column v-if="canRankGrade" :label="`${column.label}名次`" width="95">
+              <template #default="{ row }">{{ column.rank(row) ?? '—' }}</template>
+            </el-table-column>
+          </template>
         </el-table>
       </el-card>
     </template>
@@ -165,7 +182,7 @@ import {
 import { CanvasRenderer } from 'echarts/renderers'
 import { overviewApi } from '../../api'
 import { useAuthStore } from '../../stores/auth'
-import type { Overview } from '../../types'
+import type { ClassOverview, Overview } from '../../types'
 
 echarts.use([
   BarChart,
@@ -195,11 +212,65 @@ let levelChart: ReturnType<typeof echarts.init> | null = null
 let segmentChart: ReturnType<typeof echarts.init> | null = null
 let radarChart: ReturnType<typeof echarts.init> | null = null
 
-const subjectNames = computed(() =>
-  (data.value?.subjects || []).map((item) => item.name),
-)
 const canRankGrade = computed(() => auth.can('can_rank_grade'))
 const canViewTotal = computed(() => auth.can('view_total'))
+const classSortBy = ref('class')
+const classSortOrder = ref<'asc' | 'desc'>('asc')
+const classCollator = new Intl.Collator('zh-CN', { numeric: true })
+
+const classMeanColumns = computed(() => {
+  const columns = (data.value?.subjects ?? []).map((subject) => ({
+    key: `subject:${subject.public_id ?? subject.name}`,
+    label: subject.name,
+    average: (row: ClassOverview) => row.subject_avg[subject.name],
+    rank: (row: ClassOverview) => row.subject_rank?.[subject.name],
+  }))
+  if (canViewTotal.value) {
+    columns.unshift({
+      key: 'total',
+      label: '总分',
+      average: (row) => row.total_avg,
+      rank: (row) => row.total_rank,
+    })
+  }
+  return columns
+})
+
+const classSortMetrics = computed(() => [
+  { key: 'students', label: '人数', value: (row: ClassOverview) => row.students },
+  { key: 'complete', label: '齐全人数', value: (row: ClassOverview) => row.complete },
+  ...classMeanColumns.value.map((column) => ({
+    key: column.key,
+    label: `${column.label}均分`,
+    value: column.average,
+  })),
+])
+
+const sortedClassRows = computed(() => {
+  const rows = [...(data.value?.classes ?? [])]
+  const metric = classSortMetrics.value.find((option) => option.key === classSortBy.value)
+  const direction = classSortOrder.value === 'asc' ? 1 : -1
+  return rows.sort((left, right) => {
+    const nameOrder = classCollator.compare(left.class, right.class)
+    if (!metric) return nameOrder * direction
+    const a = metric.value(left) ?? null
+    const b = metric.value(right) ?? null
+    if (a === b) return nameOrder
+    if (a == null) return 1
+    if (b == null) return -1
+    return (a - b) * direction
+  })
+})
+
+function changeClassSort(key: string) {
+  classSortOrder.value = key === 'class' ? 'asc' : 'desc'
+}
+
+watch(classSortMetrics, (metrics) => {
+  if (classSortBy.value === 'class' || metrics.some((metric) => metric.key === classSortBy.value)) return
+  classSortBy.value = 'class'
+  changeClassSort('class')
+})
 
 const comment = computed(() => {
   const total = data.value?.total?.participants || 0

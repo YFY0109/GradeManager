@@ -141,6 +141,24 @@ def _segments(
     return result
 
 
+def _rank_class_averages(averages: list[tuple[str, float | None]]) -> dict[str, int]:
+    """按均分降序排名，同分并列，无成绩的班级不排名。"""
+    ranked = sorted(
+        ((public_id, average) for public_id, average in averages if average is not None),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    ranks: dict[str, int] = {}
+    previous = None
+    rank = 0
+    for position, (public_id, average) in enumerate(ranked, start=1):
+        if average != previous:
+            rank = position
+        ranks[public_id] = rank
+        previous = average
+    return ranks
+
+
 @router.get("/exams/{exam_pid}/overview")
 def overview(
     exam_pid: UUID,
@@ -257,8 +275,6 @@ def overview(
         )
         subject_rows.append(summary)
 
-    # 学科排名在班级视角下计算（该班该科在年级各班中的排名）
-
     # 总分（齐全学生）
     complete = []
     for student in scoped_students:
@@ -345,7 +361,9 @@ def overview(
                     if cls_complete
                     else None
                 ),
+                "total_rank": None,
                 "subject_avg": cls_subject_avg,
+                "subject_rank": {},
             }
         )
 
@@ -355,32 +373,34 @@ def overview(
             row["total_max"] = None
             row["total_min"] = None
 
-    # 班级视角：该班该科在年级各班中的排名（1=最高）
+    if caps["can_rank_grade"]:
+        total_ranks = _rank_class_averages(
+            [(row["class_public_id"], row["total_avg"]) for row in class_rows]
+        )
+        subject_ranks = {
+            sub["name"]: _rank_class_averages([
+                (row["class_public_id"], row["subject_avg"][sub["name"]])
+                for row in class_rows
+            ])
+            for sub in subjects
+        }
+        for row in class_rows:
+            class_public_id = row["class_public_id"]
+            row["total_rank"] = total_ranks.get(class_public_id)
+            row["subject_rank"] = {
+                name: rank_map.get(class_public_id) for name, rank_map in subject_ranks.items()
+            }
+
     for row in subject_rows:
         row["rank"] = None
     current_public = None
     if class_id is not None:
-        current_public = str(
-            next(c["public_id"] for c in classes if c["id"] == class_id)
-        )
-    if class_id is not None and caps["can_rank_grade"]:
+        current_class = next(row for row in class_rows if row["id"] == class_id)
+        current_public = current_class["class_public_id"]
         for row in subject_rows:
-            name = row["name"]
-            values = [
-                (c["class_public_id"], c["subject_avg"].get(name))
-                for c in class_rows
-                if c["subject_avg"].get(name) is not None
-            ]
-            values.sort(key=lambda item: item[1], reverse=True)
-            for pos, (public_id, _avg) in enumerate(values, start=1):
-                if public_id == current_public:
-                    row["rank"] = pos
-                    break
-    # 班级报告只返回当前班级，不能泄露其他班级的对比数据
-    if class_id is not None:
-        class_rows = [
-            c for c in class_rows if c["class_public_id"] == current_public
-        ]
+            row["rank"] = current_class["subject_rank"].get(row["name"])
+        # 班级报告只返回当前班级的汇总。
+        class_rows = [current_class]
     for row in class_rows:
         row.pop("id", None)
 
