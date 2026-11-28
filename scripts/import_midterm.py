@@ -92,6 +92,11 @@ def load_records(path: str, number_fixes: dict[str, str] | None = None) -> list[
                 "class_name": class_name,
                 "rank": rank,
                 "scores": scores,
+                # Excel 中 0 表示缺考；写入数据库时转为 NULL
+                "db_scores": {
+                    subject: None if value == 0 else value
+                    for subject, value in scores.items()
+                },
                 "total": total,
             }
         )
@@ -172,7 +177,7 @@ def main() -> None:
             )
 
         score_rows = [
-            (exam_id, student_ids[record["student_no"]], subject_ids[subject], record["scores"][subject])
+            (exam_id, student_ids[record["student_no"]], subject_ids[subject], record["db_scores"][subject])
             for record in records
             for subject in SUBJECTS
         ]
@@ -195,15 +200,20 @@ def main() -> None:
             """
             SELECT student_id, SUM(score) AS total,
                    RANK() OVER (ORDER BY SUM(score) DESC) AS rank
-            FROM scores WHERE exam_id = %s GROUP BY student_id
+            FROM scores WHERE exam_id = %s
+            GROUP BY student_id
+            HAVING count(*) FILTER (WHERE score IS NOT NULL) = (
+                SELECT count(*) FROM exam_subjects WHERE exam_id = %s
+            )
             """,
-            (exam_id,),
+            (exam_id, exam_id),
         ).fetchall()
         ranks = {row["student_id"]: (row["total"], row["rank"]) for row in ranked}
         mismatches = [
             record["line_no"]
             for record in records
-            if ranks.get(student_ids[record["student_no"]]) != (record["total"], record["rank"])
+            if all(value != 0 for value in record["scores"].values())
+            and ranks.get(student_ids[record["student_no"]]) != (record["total"], record["rank"])
         ]
         if mismatches:
             raise SystemExit(f"总分或名次校验失败 {len(mismatches)} 条，例如 rank 行号 {mismatches[:3]}。")
@@ -216,7 +226,11 @@ def main() -> None:
                 """,
                 (exam_id, subject_ids[subject]),
             ).fetchone()
-            excel_values = [record["scores"][subject] for record in records]
+            excel_values = [
+                record["scores"][subject]
+                for record in records
+                if record["scores"][subject] != 0
+            ]
             average = sum(excel_values) / len(excel_values)
             if row["n"] != len(excel_values) or abs(row["avg"] - average) > Decimal("0.00001"):
                 raise SystemExit(f"单科统计不符: {subject}")
