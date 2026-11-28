@@ -38,25 +38,25 @@ export const metaApi = {
 export const examApi = {
   list: () => http.get<Exam[]>('/exams'),
   create: (body: ExamCreateInput) => http.post<ExamOption>('/exams', body),
-  detail: (examPid: string) => http.get<ExamDetail>(`/exams/${examPid}`),
-  students: (examPid: string, classPid?: string) =>
+  detail: (examPid: string, signal?: AbortSignal) =>
+    http.get<ExamDetail>(`/exams/${examPid}`, { signal }),
+  students: (examPid: string, classPid?: string, signal?: AbortSignal) =>
     http.get<Student[]>(`/exams/${examPid}/students`, {
       params: classPid ? { class_public_id: classPid } : {},
+      signal,
     }),
   saveScores: (
     examPid: string,
     items: { student_public_id: string; subject_public_id: string; score: number | null }[],
   ) => http.post<{ saved: number; changed: number }>(`/exams/${examPid}/scores`, { items }),
-  rankingsTotal: (examPid: string) =>
-    http.get<RankRow[]>(`/exams/${examPid}/rankings/total`),
-  rankingsSubject: (examPid: string, subjectPid: string) =>
-    http.get<RankRow[]>(`/exams/${examPid}/rankings/subjects/${subjectPid}`),
-  rankingsClassTotal: (examPid: string, classPid: string) =>
-    http.get<RankRow[]>(`/exams/${examPid}/rankings/classes/${classPid}/total`),
-  rankingsClassSubject: (examPid: string, classPid: string, subjectPid: string) =>
-    http.get<RankRow[]>(
-      `/exams/${examPid}/rankings/classes/${classPid}/subjects/${subjectPid}`,
-    ),
+  rankings: (
+    examPid: string,
+    { classPid, subjectPid, signal }: { classPid?: string; subjectPid?: string; signal?: AbortSignal },
+  ) => {
+    const scope = classPid ? `/classes/${classPid}` : ''
+    const item = subjectPid ? `/subjects/${subjectPid}` : '/total'
+    return http.get<RankRow[]>(`/exams/${examPid}/rankings${scope}${item}`, { signal })
+  },
   stats: (examPid: string) => http.get<Stats>(`/exams/${examPid}/stats`),
   exportFile: (
     examPid: string,

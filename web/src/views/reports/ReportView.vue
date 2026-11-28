@@ -54,6 +54,7 @@
           :exam-pid="examPid"
           :scope-type="scopeType"
           :class-pid="classPid"
+          :exams="exams"
         />
       </el-tab-pane>
     </el-tabs>
